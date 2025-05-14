@@ -1,0 +1,44 @@
+const config = {
+  type: Phaser.AUTO, width:800, height:600, pixelArt:true,
+  physics:{ default:'arcade', arcade:{ debug:false } },
+  scene:{ preload, create, update }
+};
+new Phaser.Game(config);
+
+let player, cursors, hasTicket=false;
+function preload() {
+  this.load.image('tiles','tiles_placeholder.png');
+  this.load.spritesheet('player','player_sprite.png',{ frameWidth:16,frameHeight:16 });
+}
+function create() {
+  this.add.tileSprite(400,300,800,600,'tiles');
+  player = this.physics.add.sprite(400,300,'player',0).setCollideWorldBounds(true);
+  cursors = this.input.keyboard.createCursorKeys();
+  fetch('/access?user_email='+userEmail).then(r=>r.json()).then(d=>hasTicket=d.access_granted);
+  const theaterZone = this.add.zone(750,300,50,600);
+  this.physics.world.enable(theaterZone);
+  this.physics.add.overlap(player,theaterZone,enterTheater,this);
+}
+function update() {
+  player.setVelocity(0);
+  if(cursors.left.isDown) player.setVelocityX(-150);
+  if(cursors.right.isDown) player.setVelocityX(150);
+  if(cursors.up.isDown) player.setVelocityY(-150);
+  if(cursors.down.isDown) player.setVelocityY(150);
+}
+function enterTheater() {
+  if(hasTicket) alert('Entering Theater!');
+  else alert('Buy a ticket first!');
+}
+// in server.js (or a separate route file)
+app.post('/create-checkout-session', async (req, res) => {
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    line_items: [{ price_data: { currency:'usd', product_data:{ name:'Movie Ticket' }, unit_amount:500 }, quantity:1 }],
+    mode: 'payment',
+    success_url: `${process.env.YOUR_DOMAIN}/success.html`,
+    cancel_url: `${process.env.YOUR_DOMAIN}/cancel.html`,
+    metadata: { film_id: req.body.film_id, creator_id: req.body.creator_id }
+  });
+  res.json({ sessionId: session.id });
+});
