@@ -936,3 +936,241 @@ services:
   <li>Pay for tickets and subscriptions as required.</li>
 </ul>
 
+cd backend
+npm install bcrypt jsonwebtoken
+-- Ensure email is unique, store hashed password
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL
+);
+// backend/routes/auth.js
+const express = require('express');
+const bcrypt  = require('bcrypt');
+const router  = express.Router();
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+router.post('/signup', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+  const password_hash = await bcrypt.hash(password, 12);
+  const { data, error } = await supabase
+    .from('users')
+    .insert([{ email, password_hash }]);
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ id: data[0].id, email: data[0].email });
+});
+
+module.exports = router;
+// backend/routes/auth.js (continued)
+const jwt = require('jsonwebtoken');
+
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('id,password_hash')
+    .eq('email', email)
+    .single();
+
+  if (error || !data) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const valid = await bcrypt.compare(password, data.password_hash);
+  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+  const token = jwt.sign({ userId: data.id, email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token });
+});
+
+module.exports = router;
+// backend/middleware/auth.js
+const jwt = require('jsonwebtoken');
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ error: 'No token provided' });
+
+  const token = auth.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload;    // { userId, email }
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+module.exports = requireAuth;
+// e.g. protect /reserve-seat
+const requireAuth = require('./middleware/auth');
+
+app.post('/reserve-seat', requireAuth, async (req, res) => {
+  const userEmail = req.user.email;
+  // ... existing seat reservation logic ...
+});
+headers: {
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${token}`
+}
+<link rel="stylesheet" href="styles.css">
+
+<!-- Add this inside <head> -->
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #111;
+  font-family: 'Press Start 2P', monospace;
+}
+
+#chat-container, #friends-container {
+  font-size: 12px;
+  border: 2px solid #0ff;
+  border-radius: 4px;
+}
+
+#chat-container {
+  background: rgba(0,0,0,0.8);
+  bottom: 10px; left: 10px;
+  width: 240px; max-height: 180px;
+  padding: 6px;
+}
+
+#friends-container {
+  background: rgba(0,0,0,0.8);
+  top: 10px; right: 10px;
+  width: 180px;
+  padding: 6px;
+}
+
+button, #buy-ticket {
+  background: #0ff;
+  color: #111;
+  border: none;
+  padding: 8px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:hover, #buy-ticket:hover {
+  background: #0cc;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #111;
+  font-family: 'Press Start 2P', monospace;
+}
+
+#chat-container, #friends-container {
+  font-size: 12px;
+  border: 2px solid #0ff;
+  border-radius: 4px;
+}
+
+#chat-container {
+  background: rgba(0,0,0,0.8);
+  bottom: 10px; left: 10px;
+  width: 240px; max-height: 180px;
+  padding: 6px;
+}
+
+#friends-container {
+  background: rgba(0,0,0,0.8);
+  top: 10px; right: 10px;
+  width: 180px;
+  padding: 6px;
+}
+
+button, #buy-ticket {
+  background: #0ff;
+  color: #111;
+  border: none;
+  padding: 8px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:hover, #buy-ticket:hover {
+  background: #0cc;
+}
+// preload()
+this.load.image("tiles", "assets/tileset.png");
+this.load.tilemapTiledJSON("map", "assets/lobby-map.json");
+this.load.spritesheet("player", "assets/player.png", {
+  frameWidth: 32,
+  frameHeight: 32
+});
+// preload()
+this.load.image('table', 'assets/pool_table.png');
+this.load.image('cue',   'assets/cue_stick.png');
+this.load.image('ball',  'assets/pool_ball.png');
+
+// preload()
+this.load.image('table', 'assets/pool_table.png');
+this.load.image('cue',   'assets/cue_stick.png');
+this.load.image('ball',  'assets/pool_ball.png');
+// preload()
+this.load.image('rink',   'assets/hockey_rink.png');
+this.load.image('puck',   'assets/puck.png');
+this.load.image('mallet', 'assets/mallet.png');
+# from project root
+npx http-server frontend -c-1
+# visit http://localhost:8080 in your browser
+cd frontend
+npm init vite@latest . --template vanilla
+npm install
+# update index.html to load /src/main.js
+"scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "preview": "vite preview"
+}
+- type: static
+  name: animatenet-frontend
+  env: static
+  region: oregon
+  buildCommand: ""      # leave blank
+  publishPath: frontend # or "./frontend"
+- type: static
+  name: animatenet-frontend
+  env: static
+  region: oregon
+  buildCommand: "npm install && npm run build"
+  publishPath: "frontend/dist"
+name: CI & Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with: node-version: "16"
+
+      - name: Install & Build Frontend
+        working-directory: ./frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Install Backend
+        working-directory: ./backend
+        run: npm install
+
+      - name: Deploy to Render
+        uses: render-examples/deploy@v1
+        with:
+          apiKey: ${{ secrets.RENDER_API_KEY }}
