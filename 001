@@ -1174,3 +1174,49 @@ jobs:
         uses: render-examples/deploy@v1
         with:
           apiKey: ${{ secrets.RENDER_API_KEY }}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ticket Purchase Successful</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="centered">
+    <h1>🎉 Purchase Complete!</h1>
+    <p>Your movie ticket is now valid. Enjoy the show in the Shadow Realm!</p>
+    <a href="index.html"><button>Return to Lobby</button></a>
+  </div>
+</body>
+</html>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Purchase Canceled</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="centered">
+    <h1>❌ Purchase Canceled</h1>
+    <p>Something went wrong, or you canceled the transaction.</p>
+    <a href="index.html"><button>Back to Lobby</button></a>
+  </div>
+</body>
+</html>
+.centered {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #0ff;
+}
+// backend/routes/auth.js (or wherever you have /create-checkout-session)
+app.post('/create-checkout-session', async (req, res) => {
+  // ...
+  const session = await stripe.checkout.sessions.create({
+    // ...
+    success_url: `${process.env.YOUR_DOMAIN}/ticket-success.html`,
+    cancel_url:  `${process.env.YOUR_DOMAIN}/ticket-fail.html`,
+    // ...
+  });
+  res.json({ sessionId: session.id });
+});
