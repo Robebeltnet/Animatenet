@@ -1,0 +1,821 @@
+// server.js (excerpt)
+require('dotenv').config();
+const express = require('express');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const { createClient } = require('@supabase/supabase-js');
+const app = express();
+app.use(express.json());
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
+// 1. Sign-up endpoint
+app.post('/signup', async (req, res) => {
+  const { email, password } = req.body;
+  const { data, error } = await supabase
+    .from('users')
+    .insert([{ email, password }]);  // in prod, hash password!
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ user: data[0] });
+});
+
+// 2. Create checkout session for ticket
+app.post('/create-checkout-session', async (req, res) => {
+  const { userEmail, movieId } = req.body;
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    line_items: [{
+      price_data: {
+        currency: 'usd',
+        product_data: { name: `Ticket for film ${movieId}` },
+        unit_amount: 500  // $5
+      },
+      quantity: 1
+    }],
+    metadata: { userEmail, movieId },
+    mode: 'payment',
+    success_url: `${process.env.YOUR_DOMAIN}/ticket-success.html`,
+    cancel_url: `${process.env.YOUR_DOMAIN}/ticket-fail.html`
+  });
+  res.json({ sessionId: session.id });
+});
+
+// 3. Webhook to record ticket
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  if (event.type === 'checkout.session.completed') {
+    const s = event.data.object;
+    await supabase.from('tickets').insert([{
+      user_email: s.metadata.userEmail,
+      movie_id: s.metadata.movieId,
+      status: 'valid'
+    }]);
+  }
+  res.sendStatus(200);
+});
+
+app.listen(process.env.PORT||4242, () => console.log('Backend running'));
+-- Supabase schema for Module 1
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL
+);
+
+CREATE TABLE tickets (
+  ticket_id SERIAL PRIMARY KEY,
+  user_email TEXT REFERENCES users(email),
+  movie_id INT NOT NULL,
+  status TEXT DEFAULT 'valid'
+);
+<!-- signup.html -->
+<form id="signup-form">
+  <input type="email" name="email" placeholder="Email" required />
+  <input type="password" name="password" placeholder="Password" required />
+  <button type="submit">Sign Up</button>
+</form>
+<script>
+document.getElementById('signup-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const form = e.target;
+  const res = await fetch('/signup', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      email: form.email.value,
+      password: form.password.value
+    })
+  });
+  const data = await res.json();
+  if (data.user) alert('Signed up!');
+  else alert('Error: '+data.error);
+});
+</script>
+<!-- buy-ticket.html -->
+<button id="buy-ticket">Buy $5 Ticket</button>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+const stripe = Stripe('pk_test_YOUR_PUBLISHABLE_KEY');
+document.getElementById('buy-ticket').onclick = async () => {
+  const session = await fetch('/create-checkout-session', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail: 'user@example.com', movieId: 1 })
+  }).then(r=>r.json());
+  stripe.redirectToCheckout({ sessionId: session.sessionId });
+};
+</script>
+// bellRank.js
+/**
+ * Determine creator payout percentage based on total ticket sales.
+ * @param {number} ticketSales – total number of tickets sold for a film
+ * @returns {number} payout percentage
+ */
+function getCreatorPayoutPercentage(ticketSales) {
+  if (ticketSales < 1000) return 50;      // Bronze
+  if (ticketSales < 10000) return 60;     // Silver
+  if (ticketSales < 25000) return 70;     // Gold
+  if (ticketSales < 50000) return 80;     // Platinum
+  return 90;                              // Diamond
+}
+
+module.exports = { getCreatorPayoutPercentage };
+const { getCreatorPayoutPercentage } = require('./bellRank');
+
+router.post('/', express.raw({ type: 'application/json' }), async (req, res) => {
+  // … after recording the sale …
+  const { count: ticketsSold } = await supabase
+    .from('film_sales')
+    .select('*', { count: 'exact' })
+    .eq('film_id', filmId);
+
+  const percent = getCreatorPayoutPercentage(ticketsSold);
+  const creatorRevenue = amountPaid * (percent / 100);
+
+  await supabase.from('creator_payouts').insert({
+    creator_id: creatorId,
+    film_id:     filmId,
+    tickets_sold: ticketsSold,
+    payout_percent: percent,
+    revenue_share:  creatorRevenue
+  });
+
+  console.log(`Bell-Rank: ${ticketsSold} sold → ${percent}% payout → $${creatorRevenue/100}`);
+  res.sendStatus(200);
+});
+<!-- bell-rank.html -->
+<div id="tier">Loading your rank…</div>
+<script>
+  async function fetchBellRank(creatorId) {
+    const res = await fetch(`/creator-rank?creatorId=${creatorId}`);
+    const { ticketsSold, payoutPercent } = await res.json();
+    document.getElementById('tier').innerText =
+      `Tier: ${payoutPercent}% (Sold: ${ticketsSold})`;
+  }
+  fetchBellRank(123);
+</script>
+// server.js (new endpoint)
+app.get('/creator-rank', async (req, res) => {
+  const { creatorId } = req.query;
+  const { count: ticketsSold } = await supabase
+    .from('film_sales')
+    .select('*', { count: 'exact' })
+    .eq('creator_id', creatorId);
+
+  const payoutPercent = getCreatorPayoutPercentage(ticketsSold);
+  res.json({ ticketsSold, payoutPercent });
+});
+// server.js (new endpoint)
+app.get('/creator-rank', async (req, res) => {
+  const { creatorId } = req.query;
+  const { count: ticketsSold } = await supabase
+    .from('film_sales')
+    .select('*', { count: 'exact' })
+    .eq('creator_id', creatorId);
+
+  const payoutPercent = getCreatorPayoutPercentage(ticketsSold);
+  res.json({ ticketsSold, payoutPercent });
+});
+// routes/webhook.js
+const express = require('express');
+const router = express.Router();
+const Stripe = require('stripe');
+const { createClient } = require('@supabase/supabase-js');
+
+const stripe    = Stripe(process.env.STRIPE_SECRET_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+router.post('/', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  // 1. Verify signature
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error('Webhook signature error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // 2. Handle the checkout.session.completed event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+
+    // 3. Record sale in Supabase
+    const { error } = await supabase
+      .from('film_sales')
+      .insert({
+        user_email: session.customer_email,
+        film_id:     session.metadata.film_id,
+        amount:      session.amount_total
+      });
+
+    if (error) {
+      console.error('Supabase insert error:', error.message);
+      return res.status(500).send('Database error');
+    }
+
+    console.log(`Recorded sale for ${session.customer_email}`);
+  }
+
+  res.status(200).send('Received');
+});
+
+module.exports = router;
+// server.js
+require('dotenv').config();
+const express       = require('express');
+const webhookRouter = require('./routes/webhook');
+const app           = express();
+
+app.use('/webhook', webhookRouter);
+app.use(express.json());
+
+// Access check endpoint (for frontend)
+app.get('/access', async (req, res) => {
+  const { count } = await supabase
+    .from('film_sales')
+    .select('*', { count: 'exact' })
+    .eq('user_email', req.query.user_email);
+
+  res.json({ access_granted: count > 0 });
+});
+
+app.listen(process.env.PORT || 4242, () => {
+  console.log('Server running');
+});
+# Use Stripe CLI to trigger a webhook event:
+stripe login
+stripe listen --forward-to localhost:4242/webhook
+stripe trigger checkout.session.completed
+<!-- sales-check.html -->
+<button id="check-sales">Check My Purchases</button>
+<script>
+  document.getElementById('check-sales').onclick = async () => {
+    const res = await fetch('/access?user_email=user@example.com');
+    const { access_granted } = await res.json();
+    alert(access_granted 
+      ? 'You have valid tickets!' 
+      : 'No tickets found.'
+    );
+  };
+</script>
+<!-- sales-check.html -->
+<button id="check-sales">Check My Purchases</button>
+<script>
+  document.getElementById('check-sales').onclick = async () => {
+    const res = await fetch('/access?user_email=user@example.com');
+    const { access_granted } = await res.json();
+    alert(access_granted 
+      ? 'You have valid tickets!' 
+      : 'No tickets found.'
+    );
+  };
+</script>
+// server.js (or routes/access.js)
+require('dotenv').config();
+const express       = require('express');
+const { createClient } = require('@supabase/supabase-js');
+const app           = express();
+app.use(express.json());
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
+// 1. Check if user has any valid ticket
+app.get('/access', async (req, res) => {
+  const { user_email } = req.query;
+  const { count } = await supabase
+    .from('tickets')
+    .select('*', { count: 'exact' })
+    .eq('user_email', user_email)
+    .eq('status', 'valid');
+  res.json({ access_granted: count > 0 });
+});
+
+// 2. Reserve a specific seat in a theater
+app.post('/reserve-seat', async (req, res) => {
+  const { user_email, theater_id, seat_number } = req.body;
+  
+  // Check if seat is already taken
+  const { data: existing } = await supabase
+    .from('seats')
+    .select('*')
+    .eq('theater_id', theater_id)
+    .eq('seat_number', seat_number);
+
+  if (existing.length) {
+    return res.status(409).json({ error: 'Seat taken' });
+  }
+
+  // Reserve the seat
+  const { data, error } = await supabase
+    .from('seats')
+    .insert([{ user_email, theater_id, seat_number }]);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ reserved: true, seat: data[0] });
+});
+
+app.listen(process.env.PORT||4242, () => console.log('Server running'));
+-- Supabase schema additions
+CREATE TABLE seats (
+  id SERIAL PRIMARY KEY,
+  user_email TEXT REFERENCES tickets(user_email),
+  theater_id INT NOT NULL,
+  seat_number INT NOT NULL,
+  UNIQUE(theater_id, seat_number)
+);
+-- Supabase schema additions
+CREATE TABLE seats (
+  id SERIAL PRIMARY KEY,
+  user_email TEXT REFERENCES tickets(user_email),
+  theater_id INT NOT NULL,
+  seat_number INT NOT NULL,
+  UNIQUE(theater_id, seat_number)
+);
+// In main.js, after create()
+let seatingMode = false;
+
+function create() {
+  // ... existing lobby setup ...
+
+  // Create theater entrance zone
+  const theaterZone = this.add.zone(750, 300, 50, 600);
+  this.physics.world.enable(theaterZone);
+  this.physics.add.overlap(player, theaterZone, promptSeatSelection, this);
+}
+
+function promptSeatSelection() {
+  if (!hasTicket) return;
+  seatingMode = true;
+  this.physics.pause();
+  showSeatUI();  
+}
+
+function showSeatUI() {
+  // Simple prompt (replace with your UI)
+  const seat = prompt('Choose seat number (1–50):');
+  if (seat) reserveSeat(parseInt(seat));
+}
+
+async function reserveSeat(seatNumber) {
+  const res = await fetch('/reserve-seat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      user_email: userEmail,
+      theater_id: 1,         // hard-coded for MVP
+      seat_number: seatNumber
+    })
+  });
+  const data = await res.json();
+  if (data.reserved) {
+    enterTheater(seatNumber);
+  } else {
+    alert(data.error || 'Unable to reserve');
+    this.physics.resume();
+  }
+}
+
+function enterTheater(seatNumber) {
+  // Lock player in place & switch view
+  player.x = 400; player.y = 500;
+  seatingMode = false;
+  showMovieScreen();
+}
+
+function showMovieScreen() {
+  // Clear world or overlay movie
+  this.add.rectangle(400, 300, 800, 600, 0x000000);
+  this.add.text(300, 280, 'Now Playing…', { fontSize: '24px', fill: '#fff' });
+}
+// In main.js, after create()
+let seatingMode = false;
+
+function create() {
+  // ... existing lobby setup ...
+
+  // Create theater entrance zone
+  const theaterZone = this.add.zone(750, 300, 50, 600);
+  this.physics.world.enable(theaterZone);
+  this.physics.add.overlap(player, theaterZone, promptSeatSelection, this);
+}
+
+function promptSeatSelection() {
+  if (!hasTicket) return;
+  seatingMode = true;
+  this.physics.pause();
+  showSeatUI();  
+}
+
+function showSeatUI() {
+  // Simple prompt (replace with your UI)
+  const seat = prompt('Choose seat number (1–50):');
+  if (seat) reserveSeat(parseInt(seat));
+}
+
+async function reserveSeat(seatNumber) {
+  const res = await fetch('/reserve-seat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      user_email: userEmail,
+      theater_id: 1,         // hard-coded for MVP
+      seat_number: seatNumber
+    })
+  });
+  const data = await res.json();
+  if (data.reserved) {
+    enterTheater(seatNumber);
+  } else {
+    alert(data.error || 'Unable to reserve');
+    this.physics.resume();
+  }
+}
+
+function enterTheater(seatNumber) {
+  // Lock player in place & switch view
+  player.x = 400; player.y = 500;
+  seatingMode = false;
+  showMovieScreen();
+}
+
+function showMovieScreen() {
+  // Clear world or overlay movie
+  this.add.rectangle(400, 300, 800, 600, 0x000000);
+  this.add.text(300, 280, 'Now Playing…', { fontSize: '24px', fill: '#fff' });
+}
+// routes/chat.js
+const express = require('express');
+const router  = express.Router();
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Post a new chat message
+router.post('/send', async (req, res) => {
+  const { user_email, message, timestamp = new Date() } = req.body;
+  const { error } = await supabase
+    .from('chat_messages')
+    .insert([{ user_email, message, timestamp }]);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ sent: true });
+});
+
+// Get recent messages
+router.get('/recent', async (req, res) => {
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('user_email,message,timestamp')
+    .order('timestamp', { ascending: true })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+module.exports = router;
+-- Supabase schema for chat
+CREATE TABLE chat_messages (
+  id         SERIAL PRIMARY KEY,
+  user_email TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  timestamp  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+-- Supabase schema for chat
+CREATE TABLE chat_messages (
+  id         SERIAL PRIMARY KEY,
+  user_email TEXT NOT NULL,
+  message    TEXT NOT NULL,
+  timestamp  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+const chatRouter = require('./routes/chat');
+app.use('/chat', chatRouter);
+<!-- index.html additions -->
+<div id="chat-container" style="
+  position: absolute; bottom: 10px; left: 10px;
+  width: 300px; max-height: 200px; overflow-y: auto;
+  background: rgba(0,0,0,0.7); padding: 8px; border-radius: 4px;">
+  <div id="messages"></div>
+  <input id="chat-input" type="text" maxlength="50"
+         placeholder="Type (50 chars max)..." 
+         style="width: 100%; box-sizing: border-box;"/>
+</div>
+// chat.js (included on your page)
+async function fetchMessages() {
+  const res = await fetch('/chat/recent');
+  const messages = await res.json();
+  const container = document.getElementById('messages');
+  container.innerHTML = ''; 
+  messages.forEach(({ user_email, message }) => {
+    const div = document.createElement('div');
+    div.style.color = '#0ff';
+    div.style.marginBottom = '4px';
+    div.innerText = `${user_email}: ${message}`;
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+document.getElementById('chat-input').addEventListener('keypress', async e => {
+  if (e.key === 'Enter') {
+    const input = e.target;
+    const msg = input.value.trim();
+    if (!msg) return;
+    await fetch('/chat/send', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ user_email: userEmail, message: msg })
+    });
+    input.value = '';
+    fetchMessages();
+  }
+});
+
+// Poll for new messages every 2 seconds
+setInterval(fetchMessages, 2000);
+fetchMessages();
+<!-- index.html additions -->
+<div id="friends-container" style="
+  position: absolute; top: 10px; right: 10px;
+  width: 200px; background: rgba(0,0,0,0.7);
+  padding: 8px; border-radius: 4px;">
+  <h4 style="color:#0ff; margin:0 0 8px;">Friends</h4>
+  <ul id="friends-list" style="list-style:none; padding:0; margin:0;"></ul>
+</div>
+// friends.js
+let friends = []; // Fetch from backend if you store relationships
+
+function renderFriends() {
+  const list = document.getElementById('friends-list');
+  list.innerHTML = '';
+  friends.forEach(f => {
+    const li = document.createElement('li');
+    li.style.color = f.online ? '#0f0' : '#f00';
+    li.innerText = f.name;
+    list.appendChild(li);
+  });
+}
+
+// Example: initialize with dummy data
+friends = [
+  { name: 'alice@example.com', online: true },
+  { name: 'bob@example.com',   online: false }
+];
+renderFriends();
+// poolScene.js
+export default class PoolScene extends Phaser.Scene {
+  constructor() { super({ key: 'PoolScene' }); }
+
+  preload() {
+    this.load.image('table', 'assets/pool_table.png');
+    this.load.image('cue',  'assets/cue_stick.png');
+    this.load.image('ball', 'assets/pool_ball.png');
+  }
+
+  create() {
+    // background table
+    this.add.image(400, 300, 'table');
+
+    // cue stick (draggable)
+    const cue = this.add.image(400, 450, 'cue').setInteractive({ draggable: true });
+    this.input.setDraggable(cue);
+    cue.on('drag', (pointer, x, y) => cue.setPosition(x, y));
+
+    // cue ball
+    this.physics.add.image(400, 300, 'ball').setBounce(1).setCollideWorldBounds(true);
+
+    // shoot on click
+    this.input.on('pointerdown', pointer => {
+      const ball = this.physics.add.image(400, 300, 'ball');
+      this.physics.velocityFromRotation(
+        Phaser.Math.Angle.Between(ball.x, ball.y, pointer.x, pointer.y),
+        400,
+        ball.body.velocity
+      );
+    });
+  }
+}
+// poolScene.js
+export default class PoolScene extends Phaser.Scene {
+  constructor() { super({ key: 'PoolScene' }); }
+
+  preload() {
+    this.load.image('table', 'assets/pool_table.png');
+    this.load.image('cue',  'assets/cue_stick.png');
+    this.load.image('ball', 'assets/pool_ball.png');
+  }
+
+  create() {
+    // background table
+    this.add.image(400, 300, 'table');
+
+    // cue stick (draggable)
+    const cue = this.add.image(400, 450, 'cue').setInteractive({ draggable: true });
+    this.input.setDraggable(cue);
+    cue.on('drag', (pointer, x, y) => cue.setPosition(x, y));
+
+    // cue ball
+    this.physics.add.image(400, 300, 'ball').setBounce(1).setCollideWorldBounds(true);
+
+    // shoot on click
+    this.input.on('pointerdown', pointer => {
+      const ball = this.physics.add.image(400, 300, 'ball');
+      this.physics.velocityFromRotation(
+        Phaser.Math.Angle.Between(ball.x, ball.y, pointer.x, pointer.y),
+        400,
+        ball.body.velocity
+      );
+    });
+  }
+}
+// airHockeyScene.js
+export default class AirHockeyScene extends Phaser.Scene {
+  constructor() { super({ key: 'AirHockeyScene' }); }
+
+  preload() {
+    this.load.image('rink',   'assets/hockey_rink.png');
+    this.load.image('puck',   'assets/puck.png');
+    this.load.image('mallet', 'assets/mallet.png');
+  }
+
+  create() {
+    // table background
+    this.add.image(400, 300, 'rink');
+
+    // puck
+    const puck = this.physics.add.image(400, 300, 'puck')
+      .setCircle(16).setBounce(1).setCollideWorldBounds(true);
+
+    // mallets
+    const playerMallet = this.physics.add.image(400, 550, 'mallet')
+      .setImmovable(true).setInteractive({ draggable: true });
+    this.input.setDraggable(playerMallet);
+    playerMallet.on('drag', (pointer, x, y) => {
+      // limit movement to your half
+      playerMallet.x = Phaser.Math.Clamp(x, 50, 750);
+      playerMallet.y = Phaser.Math.Clamp(y, 400, 580);
+    });
+
+    // collision
+    this.physics.add.collider(puck, playerMallet);
+
+    // simple AI mallet (moves toward puck)
+    this.aiMallet = this.physics.add.image(400, 50, 'mallet').setImmovable(true);
+    this.physics.add.collider(puck, this.aiMallet);
+
+    this.time.addEvent({
+      delay: 100,
+      loop: true,
+      callback: () => {
+        this.physics.moveToObject(this.aiMallet, puck, 200);
+      }
+    });
+  }
+
+  update() {
+    // stop AI mallet drifting
+    if (this.aiMallet.body.speed < 10) this.aiMallet.body.setVelocity(0);
+  }
+}
+// main.js (add these to your scene list)
+import LobbyScene       from './lobbyScene.js';
+import PoolScene        from './poolScene.js';
+import AirHockeyScene   from './airHockeyScene.js';
+
+const config = {
+  type: Phaser.AUTO,
+  width: 800, height: 600,
+  pixelArt: true,
+  physics: { default:'arcade', arcade:{ debug:false } },
+  scene: [ LobbyScene, PoolScene, AirHockeyScene /*, other scenes… */ ]
+};
+
+const game = new Phaser.Game(config);
+
+// From your LobbyScene, to launch a mini-game:
+this.input.keyboard.on('keydown-P', () => this.scene.start('PoolScene'));
+this.input.keyboard.on('keydown-H', () => this.scene.start('AirHockeyScene'));
+/frontend
+  ├─ index.html
+  ├─ main.js
+  └─ /assets
+      ├─ pool_table.png
+      ├─ cue_stick.png
+      ├─ pool_ball.png
+      ├─ hockey_rink.png
+      ├─ puck.png
+      └─ mallet.png
+  └─ lobbyScene.js
+  └─ poolScene.js
+  └─ airHockeyScene.js
+// routes/laser.js
+const express = require('express');
+const router  = express.Router();
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Join match queue
+router.post('/join', async (req, res) => {
+  const { user_email, arena_id } = req.body;
+  await supabase.from('laser_queue').insert([{ user_email, arena_id, joined_at: new Date() }]);
+  res.json({ status: 'queued' });
+});
+
+// Get match when ready (50 players per arena)
+router.get('/match/:arena_id', async (req, res) => {
+  const arenaId = parseInt(req.params.arena_id);
+  const { data } = await supabase
+    .from('laser_queue')
+    .select('user_email')
+    .eq('arena_id', arenaId)
+    .order('joined_at', { ascending: true })
+    .limit(50);
+
+  if (data.length < 2) {
+    return res.json({ ready: false, players: data });
+  }
+
+  // Assign teams randomly
+  const shuffled = data.map(r => r.user_email).sort(() => 0.5 - Math.random());
+  const half = Math.ceil(shuffled.length / 2);
+  const teams = {
+    red:   shuffled.slice(0, half),
+    blue:  shuffled.slice(half)
+  };
+
+  // Clear queue for this arena
+  await supabase.from('laser_queue').delete().eq('arena_id', arenaId);
+
+  res.json({ ready: true, teams });
+});
+
+module.exports = router;
+-- Supabase schema for laser tag queue
+CREATE TABLE laser_queue (
+  id         SERIAL PRIMARY KEY,
+  user_email TEXT NOT NULL,
+  arena_id   INT NOT NULL,
+  joined_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+const laserRouter = require('./routes/laser');
+app.use('/laser', laserRouter);
+// laserScene.js
+export default class LaserScene extends Phaser.Scene {
+  constructor() { super({ key: 'LaserScene' }); }
+
+  preload() {
+    this.load.image('arena', 'assets/laser_arena.png');
+    this.load.spritesheet('player', 'assets/player.png', { frameWidth:32, frameHeight:32 });
+  }
+
+  async create() {
+    this.add.image(400, 300, 'arena');
+    this.player = this.physics.add.sprite(400, 550, 'player', 0);
+    this.cursors = this.input.keyboard.createCursorKeys();
+
+    // Join queue
+    await fetch('/laser/join', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ user_email: userEmail, arena_id: 1 })
+    });
+
+    // Poll for match readiness
+    this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: async () => {
+        const res = await fetch('/laser/match/1');
+        const json = await res.json();
+        if (json.ready) this.startMatch(json.teams);
+      }
+    });
+  }
+
+  update() {
+    this.player.setVelocity(0);
+    if (this.cursors.left.isDown)  this.player.setVelocityX(-200);
+    if (this.cursors.right.isDown) this.player.setVelocityX(200);
+    if (this.cursors.up.isDown)    this.player.setVelocityY(-200);
+    if (this.cursors.down.isDown)  this.player.setVelocityY(200);
+  }
+
+  startMatch(teams) {
+    // Simple console display; replace with UI
+    console.log('Match ready! Red:', teams.red, 'Blue:', teams.blue);
+    this.add.text(200, 280, 'Match Start!', { fontSize:'32px', fill:'#ff0' });
+    this.time.delayedCall(3000, () => this.scene.start('LobbyScene'));
+  }
+}
+import LaserScene from './laserScene.js';
+const config = { /* ... */, scene: [LobbyScene, PoolScene, AirHockeyScene, LaserScene] };
+this.input.keyboard.on('keydown-L', () => this.scene.start('LaserScene'));
