@@ -819,3 +819,87 @@ export default class LaserScene extends Phaser.Scene {
 import LaserScene from './laserScene.js';
 const config = { /* ... */, scene: [LobbyScene, PoolScene, AirHockeyScene, LaserScene] };
 this.input.keyboard.on('keydown-L', () => this.scene.start('LaserScene'));
+services:
+  - type: web
+    name: animatenet-backend
+    env: node
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        fromService: secret
+      - key: STRIPE_WEBHOOK_SECRET
+        fromService: secret
+      - key: SUPABASE_URL
+        fromService: secret
+      - key: SUPABASE_KEY
+        fromService: secret
+
+  - type: static
+    name: animatenet-frontend
+    env: static
+    region: oregon
+    buildCommand: npm run build # or leave blank if none
+    publishPath: frontend
+    envVars: []
+<h1>Terms of Service</h1>
+<p>Welcome to AnimateNet. By using this platform, you agree to:</p>
+<ul>
+  <li>Be respectful to others.</li>
+  <li>Own or have rights to any content you upload.</li>
+  <li>Comply with copyright and DMCA policies.</li>
+  <li>Pay for tickets and subscriptions as required.</li>
+</ul>
+<h1>Privacy Policy</h1>
+<p>We collect:</p>
+<ul>
+  <li>Email address for account creation.</li>
+  <li>Payment data (via Stripe) — we do not store full card details.</li>
+  <li>Usage data to improve platform.</li>
+</ul>
+<p>We will not share your personal data without consent.</p>
+<h1>DMCA Policy</h1>
+<p>To file a copyright infringement notice, email us at dmca@animatenet.com with:</p>
+<ul>
+  <li>Your contact info and a description of the copyrighted work.</li>
+  <li>URLs where infringing material appears.</li>
+  <li>A statement under penalty of perjury that you are the copyright owner.</li>
+</ul>
+this.scene.start('PoolScene');
+// …or…
+this.scene.start('AirHockeyScene');
+/animatenet
+│
+├── backend
+│   ├── server.js
+│   ├── routes
+│   │   ├── webhook.js
+│   │   ├── access.js
+│   │   ├── chat.js
+│   │   ├── laser.js
+│   │   └── …other routes
+│   ├── bellRank.js
+│   ├── .env.example
+│   └── package.json
+│
+├── frontend
+│   ├── index.html
+│   ├── main.js
+│   ├── lobbyScene.js
+│   ├── poolScene.js
+│   ├── airHockeyScene.js
+│   ├── laserScene.js
+│   ├── assets
+│   │   ├── tileset.png
+│   │   ├── player.png
+│   │   └── pool_table.png
+│   │   └── …etc
+│   └── legal
+│       ├── terms.html
+│       ├── privacy.html
+│       └── dmca.html
+│
+├── render.yaml
+├── README.md
+└── .gitignore
