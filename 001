@@ -903,3 +903,36 @@ this.scene.start('AirHockeyScene');
 ├── render.yaml
 ├── README.md
 └── .gitignore
+services:
+  - type: web
+    name: animatenet-backend
+    env: node
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        fromService: secret
+      - key: STRIPE_WEBHOOK_SECRET
+        fromService: secret
+      - key: SUPABASE_URL
+        fromService: secret
+      - key: SUPABASE_KEY
+        fromService: secret
+
+  - type: static
+    name: animatenet-frontend
+    env: static
+    region: oregon
+    buildCommand: npm run build # or leave blank if none
+    publishPath: frontend
+    envVars: []
+<h1>Terms of Service</h1>
+<p>Welcome to AnimateNet. By using this platform, you agree to:</p>
+<ul>
+  <li>Be respectful to others.</li>
+  <li>Own or have rights to any content you upload.</li>
+  <li>Comply with copyright and DMCA policies.</li>
+  <li>Pay for tickets and subscriptions as required.</li>
+</ul>
+
