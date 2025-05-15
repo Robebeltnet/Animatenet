@@ -1220,3 +1220,37 @@ app.post('/create-checkout-session', async (req, res) => {
   });
   res.json({ sessionId: session.id });
 });
+try {
+  const { data, error } = await supabase.from('film_sales').insert({
+    user_email: s.customer_email,
+    film_id: s.metadata.film_id,
+    amount: s.amount_total,
+  });
+  if (error) throw new Error(error.message);
+} catch (err) {
+  console.error('Error recording sale:', err.message);
+  return res.status(500).send('Internal Server Error');
+}
+if (!film_id || !creator_id || typeof film_id !== 'string' || typeof creator_id !== 'string') {
+  return res.status(400).json({ error: 'Invalid input data' });
+}
+
+try {
+  const { data, error } = await supabase.from('film_sales').insert({
+    user_email: s.customer_email,
+    film_id: s.metadata.film_id,
+    amount: s.amount_total,
+  });
+  if (error) throw new Error(error.message);
+} catch (err) {
+  console.error('Error recording sale:', err.message);
+  return res.status(500).send('Internal Server Error');
+}
+
+if (!film_id || !creator_id || typeof film_id !== 'string' || typeof creator_id !== 'string') {
+  return res.status(400).json({ error: 'Invalid input data' });
+}
+
+git add .
+git commit -m "Added error handling and input validation for endpoints"
+git push
